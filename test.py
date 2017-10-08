@@ -2,24 +2,31 @@
 
 # tests
 
-from lexer import lexer
+from sleeve import parser
+from sleeve import registers
 
 
-def test_lexer():
-    '''test lexer'''
-    data = '''
-    LDR R1, =3
-    MOV R1, R2
-    ADD R1, R2, R3
-    SUB R1, R2, R3
-    MUL R1, R2, R3
-    '''
-    lexer.input(data)
+data = {
+    'simple': '''
+        LDR R1, =3  ; some vanity comment
+        MOV R3, R1
+        ADD R1, R2, R3 ; more comments
+        SUB R1, R2, R3
+        ; comment between lines
+        ; for testing purposes
+        MUL R1, R2, R3
+        '''
+}
 
-    for token in lexer:
-        print(token)
+
+def test_parser():
+    '''test parser'''
+    for line in data['simple'].splitlines():
+        print(line)
+        parser.parse(line)
+        print(registers)
 
 
 if __name__ == '__main__':
     # do things
-    test_lexer()
+    test_parser()
