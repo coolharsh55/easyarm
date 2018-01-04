@@ -11,8 +11,10 @@
 # MUL RX, RY, RZ
 
 NO_REGISTERS = 15
-registers = dict((r, 0) for r in range(1, NO_REGISTERS))
-
+registers = dict((r, 0) for r in range(1, NO_REGISTERS + 1))
+STACK = []
+TABS = 0
+BYTES = {}
 
 import ply.lex as lex
 
@@ -23,14 +25,24 @@ tokens = (
     'INSTRUCTION_ADD',
     'INSTRUCTION_SUB',
     'INSTRUCTION_MUL',
+    'INSTRUCTION_LDRB',
+    'INSTRUCTION_CMP',
+    'INSTRUCTION_BEQ',
+    'INSTRUCTION_B',
+    'INSTRUCTION_DCB',
+    'INSTRUCTION_DCD',
+    'INSTRUCTION_SPACE',
     'REGISTER',
+    'REGISTER_ADDR',
     'NUMBER',
     'COMMENT',
+    'LABEL',
+    'LABEL_REF',
 )
 
 
-def t_INSTRUCTION_LDR(t):
-    r'LDR '
+def t_INSTRUCTION_LDRB(t):
+    r'LDRB '
     t.value = t.value.strip()
     return t
 
@@ -59,20 +71,79 @@ def t_INSTRUCTION_MUL(t):
     return t
 
 
+def t_INSTRUCTION_LDR(t):
+    r'LDR '
+    t.value = t.value.strip()
+    return t
+
+
+def t_INSTRUCTION_CMP(t):
+    r'CMP '
+    t.value = t.value.strip()
+    return t
+
+
+def t_INSTRUCTION_BEQ(t):
+    r'BEQ '
+    t.value = t.value.strip()
+    return t
+
+
+def t_INSTRUCTION_B(t):
+    r'B '
+    t.value = t.value.strip()
+    return t
+
+
+def t_INSTRUCTION_DCB(t):
+    r'DCB\s+.+'
+    t.value = t.value[4:].strip()
+    return t
+
+
+def t_INSTRUCTION_DCD(t):
+    r'DCD\s+.+'
+    t.value = t.value[4:].strip()
+    return t
+
+
+def t_INSTRUCTION_SPACE(t):
+    r'SPACE\s+\d+'
+    t.value = int(t.value[5:].strip())
+    return t
+
+
 def t_REGISTER(t):
     r'R\d{1}'
     t.value = int(t.value[1:])
     return t
 
 
+def t_REGISTER_ADDR(t):
+    r'\[R\d{1}\]'
+    t.value = t.value[2:-1]
+    return t
+
+
 def t_NUMBER(t):
-    r'=\d+'
+    r'[=#]{1}\d+'
     t.value = int(t.value[1:])
     return t
 
 
 def t_COMMENT(t):
     r';.*$'
+    return t
+
+
+def t_LABEL(t):
+    r'\w+'
+    return t
+
+
+def t_LABEL_REF(t):
+    r'=\w+'
+    t.value = t.value[1:]
     return t
 
 
@@ -90,45 +161,109 @@ lexer = lex.lex()
 
 import ply.yacc as yacc
 
+def _tabs(value=0):
+    global TABS
+    if value:
+        TABS += value
+    return '\t' * TABS
+
 
 def p_expression(p):
     'expression : expression COMMENT'
     pass
 
 
+def p_label(p):
+    'expression : LABEL'
+    if p[1] == 'while':
+        print(_tabs(), p[1])
+        _tabs(1)
+    elif p[1] in ('endwhile', 'endwh'):
+        _tabs(-1)
+        print(_tabs(), p[1])
+    else:
+        print(_tabs(), p[1])
+
+
+def p_databytes(p):
+    '''expression : LABEL INSTRUCTION_DCB
+                  | LABEL INSTRUCTION_DCD'''
+    BYTES[p[1]] = p[2]
+    print(_tabs(), '%s = %s' % (p[1], p[2]))
+
+
+def p_allocate_space(p):
+    'expression : LABEL INSTRUCTION_SPACE'
+    BYTES[p[1]] = '%sbytes' % p[2]
+
+
 def p_load(p):
     'expression : INSTRUCTION_LDR REGISTER NUMBER'
-    # print('LOAD', p[2], p[3])
-    registers[p[2]] = p[3]
-    # print(registers)
+    print(_tabs(), 'R%s = %s' % (p[2], p[3]))
+
+
+def p_loadbyte(p):
+    'expression : INSTRUCTION_LDRB REGISTER REGISTER_ADDR'
+    print(_tabs(), 'R%s = *R%s' % (p[2], p[3]))
+
+
+def p_loadstring(p):
+    'expression : INSTRUCTION_LDR REGISTER LABEL_REF'
+    print(_tabs(), 'R%s = addr(%s)' % (p[2], p[3]))
 
 
 def p_mov(p):
     'expression : INSTRUCTION_MOV REGISTER REGISTER'
-    # print('MOV', p[2], p[3])
-    registers[p[2]] = registers[p[3]]
-    # print(registers)
+    print(_tabs(), 'R%s = %s' % (p[2], p[3]))
 
 
-def p_add(p):
-    'expression : INSTRUCTION_ADD REGISTER REGISTER REGISTER'
-    # print('ADD', p[2], p[3], p[4])
-    registers[p[2]] = registers[p[3]] + registers[p[4]]
-    # print(registers)
+def p_compare(p):
+    'expression : INSTRUCTION_CMP REGISTER NUMBER'
+    STACK.append((p[2], p[3]))
 
 
-def p_sub(p):
-    'expression : INSTRUCTION_SUB REGISTER REGISTER REGISTER'
-    # print('SUB', p[2], p[3], p[4])
-    registers[p[2]] = registers[p[3]] - registers[p[4]]
-    # print(registers)
+def p_branch(p):
+    'expression : INSTRUCTION_B LABEL'
+    print(_tabs(), 'goto %s' % p[2])
 
 
-def p_mul(p):
-    'expression : INSTRUCTION_MUL REGISTER REGISTER REGISTER'
-    # print('MUL', p[2], p[3], p[4])
-    registers[p[2]] = registers[p[3]] * registers[p[4]]
-    # print(registers)
+def p_branch_equal(p):
+    'expression : INSTRUCTION_BEQ LABEL'
+    registers = STACK.pop()
+    print(_tabs(), 'if R%s == %s' % registers)
+    print(_tabs(), '\tgoto %s' % p[2])
+
+
+def p_mads(p):
+    '''expression : INSTRUCTION_ADD REGISTER REGISTER REGISTER
+                  | INSTRUCTION_SUB REGISTER REGISTER REGISTER
+                  | INSTRUCTION_MUL REGISTER REGISTER REGISTER'''
+    if p[1] == 'ADD':
+        sign = '+'
+    elif p[1] == 'SUB':
+        sign = '-'
+    elif p[1] == 'MUL':
+        sign = '*'
+    if p[2] == p[3]:
+        print(_tabs(), 'R%s %s= R%s' % (p[2], sign, p[4]))
+    else:
+        print(_tabs(), 'R%s = R%s %s R%s' % (p[2], p[3], sign, p[4]))
+
+
+def p_mads_value(p):
+    '''expression : INSTRUCTION_ADD REGISTER REGISTER NUMBER
+                  | INSTRUCTION_SUB REGISTER REGISTER NUMBER
+                  | INSTRUCTION_MUL REGISTER REGISTER NUMBER'''
+    if p[1] == 'ADD':
+        sign = '+'
+    elif p[1] == 'SUB':
+        sign = '-'
+    elif p[1] == 'MUL':
+        sign = '*'
+    if p[2] == p[3]:
+        print(_tabs(), 'R%s %s= %s' % (p[2], sign, p[4]))
+    else:
+        print(_tabs(), 'R%s = R%s %s %s' % (p[2], p[3], sign, p[4]))
 
 
 def p_error(p):
