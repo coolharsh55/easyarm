@@ -17,6 +17,9 @@ TABS = 0
 BYTES = {}
 
 import ply.lex as lex
+from colorama import init
+init()
+from colorama import Fore, Back, Style
 
 # tokens
 tokens = (
@@ -29,6 +32,7 @@ tokens = (
     'INSTRUCTION_CMP',
     'INSTRUCTION_BEQ',
     'INSTRUCTION_B',
+    'INSTRUCTION_BLT',
     'INSTRUCTION_DCB',
     'INSTRUCTION_DCD',
     'INSTRUCTION_SPACE',
@@ -89,8 +93,14 @@ def t_INSTRUCTION_BEQ(t):
     return t
 
 
+def t_INSTRUCTION_BLT(t):
+    r'BLT '
+    t.value = t.value.strip()
+    return t
+
+
 def t_INSTRUCTION_B(t):
-    r'B '
+    r'[bB] '
     t.value = t.value.strip()
     return t
 
@@ -132,7 +142,8 @@ def t_NUMBER(t):
 
 
 def t_COMMENT(t):
-    r';.*$'
+    r';.+'
+    t.value = t.value[1:]
     return t
 
 
@@ -165,24 +176,30 @@ def _tabs(value=0):
     global TABS
     if value:
         TABS += value
+        if TABS < 0:
+            TABS = 0
     return '\t' * TABS
 
 
 def p_expression(p):
     'expression : expression COMMENT'
-    pass
+    print(_tabs(), Fore.CYAN, '#', p[2], Style.RESET_ALL)
 
 
 def p_label(p):
     'expression : LABEL'
-    if p[1] == 'while':
-        print(_tabs(), p[1])
+    style = Fore.RED
+    if p[1] == 'while' or p[1].startswith('while'):
+        print(_tabs(), style, p[1], Style.RESET_ALL)
         _tabs(1)
     elif p[1] in ('endwhile', 'endwh'):
         _tabs(-1)
-        print(_tabs(), p[1])
+        print(_tabs(), style, p[1], Style.RESET_ALL)
+    elif p[1].startswith('end'):
+        _tabs(-1)
+        print(_tabs(), style, p[1], Style.RESET_ALL)
     else:
-        print(_tabs(), p[1])
+        print(_tabs(), style, p[1], Style.RESET_ALL)
 
 
 def p_databytes(p):
@@ -195,11 +212,17 @@ def p_databytes(p):
 def p_allocate_space(p):
     'expression : LABEL INSTRUCTION_SPACE'
     BYTES[p[1]] = '%sbytes' % p[2]
+    print(_tabs(), '%s = [%s]bytes' % (p[1], p[2]))
 
 
 def p_load(p):
     'expression : INSTRUCTION_LDR REGISTER NUMBER'
     print(_tabs(), 'R%s = %s' % (p[2], p[3]))
+
+
+def p_load_addr(p):
+    'expression : INSTRUCTION_LDR REGISTER REGISTER_ADDR'
+    print(_tabs(), 'R%s = *R%s' % (p[2], p[3]))
 
 
 def p_loadbyte(p):
@@ -213,12 +236,14 @@ def p_loadstring(p):
 
 
 def p_mov(p):
-    'expression : INSTRUCTION_MOV REGISTER REGISTER'
+    '''expression : INSTRUCTION_MOV REGISTER REGISTER
+                  | INSTRUCTION_MOV REGISTER NUMBER'''
     print(_tabs(), 'R%s = %s' % (p[2], p[3]))
 
 
 def p_compare(p):
-    'expression : INSTRUCTION_CMP REGISTER NUMBER'
+    '''expression : INSTRUCTION_CMP REGISTER NUMBER
+                  | INSTRUCTION_CMP REGISTER REGISTER'''
     STACK.append((p[2], p[3]))
 
 
@@ -228,9 +253,13 @@ def p_branch(p):
 
 
 def p_branch_equal(p):
-    'expression : INSTRUCTION_BEQ LABEL'
+    '''expression : INSTRUCTION_BEQ LABEL
+                  | INSTRUCTION_BLT LABEL'''
     registers = STACK.pop()
-    print(_tabs(), 'if R%s == %s' % registers)
+    if p[1] == 'BEQ':
+        print(_tabs(), 'if R%s == %s' % registers)
+    elif p[1] == 'BLT':
+        print(_tabs(), 'if R%s < %s' % registers)
     print(_tabs(), '\tgoto %s' % p[2])
 
 
